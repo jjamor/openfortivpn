@@ -297,6 +297,10 @@ static int parse_xml_config(struct tunnel *tunnel, const char *buffer)
 	if (strncmp(buffer, "HTTP/1.1 200 OK\r\n", 17))
 		return ERR_HTTP_BAD_RES_CODE;
 
+	log_debug("Got Remote Config (XML)\n");
+	log_debug("Response:\n");
+	log_debug(buffer);
+
 	// Skip the HTTP header
 	buffer = strstr(buffer, "\r\n\r\n");
 
@@ -339,6 +343,13 @@ static
 int parse_config(struct tunnel *tunnel, const char *buffer)
 {
 	char *c;
+
+	if (strncmp(buffer, "HTTP/1.1 200 OK\r\n", 17))
+		return ERR_HTTP_BAD_RES_CODE;
+
+	log_debug("Got Remote Config (non-XML)\n");
+	log_debug("Response:\n");
+	log_debug(buffer);
 
 	buffer = strcasestr(buffer, "NAME=\"text6\"");
 	if (!buffer)
