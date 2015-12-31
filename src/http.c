@@ -15,13 +15,45 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <ctype.h>
+#include <string.h>
+
 #include "http.h"
 #include "xml.h"
 #include "log.h"
 #include "ssl.h"
 #include "ipv4.h"
+#include "userinput.h"
 
 #define BUFSZ 0x8000
+
+/*
+ * URL-encodes a string for HTTP requests.
+ *
+ * The dest buffer size MUST be at least strlen(str) * 3 + 1.
+ *
+ * @param[out] dest  the buffer to write the URL-encoded string
+ * @param[in]  str   the input string to be escaped
+ */
+static void url_encode(char *dest, const char *str)
+{
+	while (*str != '\0') {
+		if (isalnum(*str) || *str == '-' || *str == '_'
+		    || *str == '.' || *str == '~')
+			*dest++ = *str;
+		else if (*str == ' ')
+			*dest++ = '+';
+		else {
+			static char hex[] = "0123456789abcdef";
+
+			*dest++ = '%';
+			*dest++ = hex[*str >> 4];
+			*dest++ = hex[*str & 15];
+		}
+		str++;
+	}
+	*dest = '\0';
+}
 
 /*
  * Sends data to the HTTP server.
@@ -48,26 +80,25 @@ int http_send(struct tunnel *tunnel, const char *request, ...)
 
 	while (n == 0)
 		n = safe_ssl_write(tunnel->ssl_handle, (uint8_t *) buffer,
-				   length);
+		                   length);
 	if (n < 0) {
 		log_debug("Error writing to SSL connection (%s).\n",
-			  err_ssl_str(n));
+		          err_ssl_str(n));
 		return ERR_HTTP_SSL;
 	}
 
 	return 1;
 }
 
-char *
-find_header (char *res, char *header)
+static const char *find_header(const char *res, const char *header)
 {
-	char *line = res;
+	const char *line = res;
 
-	while (memcmp (line, "\r\n", 2)) {
-		int line_len = (char *)memmem (line, BUFSZ, "\r\n", 2) - line;
+	while (memcmp(line, "\r\n", 2)) {
+		int line_len = (char *) memmem(line, BUFSZ, "\r\n", 2) - line;
 		int head_len = strlen (header);
 
-		if (line_len > head_len && !strncasecmp (line, header, head_len))
+		if (line_len > head_len && !strncasecmp(line, header, head_len))
 			return line + head_len;
 		line += line_len + 2;
 	}
@@ -99,34 +130,38 @@ int http_receive(struct tunnel *tunnel, char **response)
 
 	do {
 		n = safe_ssl_read(tunnel->ssl_handle,
-				  (uint8_t *) buffer + bytes_read,
-				  BUFSZ - 1 - bytes_read);
+		                  (uint8_t *) buffer + bytes_read,
+		                  BUFSZ - 1 - bytes_read);
 		if (n > 0) {
-			char *eoh;
+			const char *eoh;
 
 			bytes_read += n;
 
 			if (!header_size) {
 				/* Did we see the header end? Then get the body size. */
-				eoh = memmem (buffer, bytes_read, "\r\n\r\n", 4);
+				eoh = memmem(buffer, bytes_read, "\r\n\r\n", 4);
 				if (eoh) {
-					char *header;
+					const char *header;
 
-					header = find_header (buffer, "Content-Length: ");
+					header = find_header(buffer, "Content-Length: ");
 					header_size = eoh - buffer + 4;
 					if (header)
 						content_size = atoi(header);
 
-					if (find_header (buffer, "Transfer-Encoding: chunked"))
+					if (find_header(buffer,
+					                "Transfer-Encoding: chunked"))
 						chunked = 1;
 				}
 			}
 
 			if (header_size) {
-				/* We saw the whole header, let's check if the body is done as well */
+				/* We saw the whole header, let's check if the
+				 * body is done as well */
 				if (chunked) {
 					/* Last chunk terminator. Done naively. */
-					if (bytes_read >= 7 && !memcmp (&buffer[bytes_read - 7], "\r\n0\r\n\r\n", 7))
+					if (bytes_read >= 7 &&
+					    !memcmp(&buffer[bytes_read - 7],
+					            "\r\n0\r\n\r\n", 7))
 						break;
 				} else {
 					if (bytes_read >= header_size + content_size)
@@ -144,15 +179,15 @@ int http_receive(struct tunnel *tunnel, char **response)
 
 	if (!header_size) {
 		log_debug("Error reading from SSL connection (%s).\n",
-			  err_ssl_str(n));
+		          err_ssl_str(n));
 		free(buffer);
 		return ERR_HTTP_SSL;
 	}
 
 	if (memmem(&buffer[header_size], bytes_read - header_size,
-	    "<!--sslvpnerrmsgkey=sslvpn_login_permission_denied-->", 53) ||
+	           "<!--sslvpnerrmsgkey=sslvpn_login_permission_denied-->", 53) ||
 	    memmem(buffer, header_size, "permission_denied denied", 24) ||
-            memmem(buffer, header_size, "Permission denied", 17)) {
+	    memmem(buffer, header_size, "Permission denied", 17)) {
 		free(buffer);
 		return ERR_HTTP_PERMISSION;
 	}
@@ -174,24 +209,23 @@ int http_receive(struct tunnel *tunnel, char **response)
 }
 
 static int do_http_request(struct tunnel *tunnel, const char *method,
-			   const char *uri, const char *data, char **response)
+                           const char *uri, const char *data, char **response)
 {
 	int ret;
-	char template[] =
-		"%s %s HTTP/1.1\r\n"
-		"Host: %s:%d\r\n"
-		"User-Agent: Mozilla/5.0 SV1\r\n"
-		"Accept: text/plain\r\n"
-		"Accept-Encoding: identify\r\n"
-		"Content-Type: application/x-www-form-urlencoded\r\n"
-		"Cookie: %s\r\n"
-		"Content-Length: %d\r\n"
-		"\r\n%s";
+	char *template = ("%s %s HTTP/1.1\r\n"
+	                  "Host: %s:%d\r\n"
+	                  "User-Agent: Mozilla/5.0 SV1\r\n"
+	                  "Accept: text/plain\r\n"
+	                  "Accept-Encoding: identify\r\n"
+	                  "Content-Type: application/x-www-form-urlencoded\r\n"
+	                  "Cookie: %s\r\n"
+	                  "Content-Length: %d\r\n"
+	                  "\r\n%s");
 
 	ret = http_send(tunnel, template, method, uri,
-			tunnel->config->gateway_host,
-			tunnel->config->gateway_port, tunnel->config->cookie,
-			strlen(data), data);
+	                tunnel->config->gateway_host,
+	                tunnel->config->gateway_port, tunnel->config->cookie,
+	                strlen(data), data);
 	if (ret != 1)
 		return ret;
 
@@ -207,7 +241,7 @@ static int do_http_request(struct tunnel *tunnel, const char *method,
  *             < 0       in case of error
  */
 static int http_request(struct tunnel *tunnel, const char *method,
-			const char *uri, const char *data, char **response)
+                        const char *uri, const char *data, char **response)
 {
 	int ret = do_http_request (tunnel, method, uri, data, response);
 
@@ -223,35 +257,55 @@ static int http_request(struct tunnel *tunnel, const char *method,
 }
 
 /*
- * Authenticates to gateway by sending username and password.
+ * Read value for key from a string like "key1=value1&key2=value2".
+ * The `key` arg is supposed to contains the final "=".
  *
  * @return  1   in case of success
- *          < 0 in case of error
+ *          -1  key not found
+ *          -2  value too large for buffer
+ *          -3  if no memory
  */
-int auth_log_in(struct tunnel *tunnel)
+static int get_value_from_response(const char *buf, const char *key,
+                                   char *retbuf, size_t retbuflen)
 {
 	int ret;
-	char data[256];
-	char *res, *line, *end;
+	char *tokens, *kv_pair;
+	size_t keylen = strlen(key);
 
-	tunnel->config->cookie[0] = '\0';
+	tokens = strdup(buf);
+	if (tokens == NULL)
+		return -3;
 
-	snprintf(data, 256, "username=%s&credential=%s&realm=&ajax=1"
-		 "&redir=%%2Fremote%%2Findex&just_logged_in=1",
-		 tunnel->config->username, tunnel->config->password);
+	ret = -1;
 
-	ret = http_request(tunnel, "POST", "/remote/logincheck", data, &res);
-	if (ret != 1)
-		return ret;
+	kv_pair = strtok(tokens, "&,\r\n");
+	for (; kv_pair != NULL; kv_pair = strtok(NULL, "&,\r\n")) {
+		if (strncmp(key, kv_pair, keylen) == 0) {
+			char *val = &kv_pair[keylen];
 
-	if (strncmp(res, "HTTP/1.1 200 OK\r\n", 17)) {
-		ret = ERR_HTTP_BAD_RES_CODE;
-		goto end;
+			if (strlen(val) > retbuflen - 1) {  // value too long
+				ret = -2;
+			} else {
+				strcpy(retbuf, val);
+				ret = 1;
+			}
+			break;
+		}
 	}
+
+	free(tokens);
+	return ret;
+}
+
+static int get_auth_cookie(struct tunnel *tunnel, char *buf)
+{
+	int ret = 0;
+	const char *line;
+	char *end;
 
 	ret = ERR_HTTP_NO_COOKIE;
 
-	line = find_header (res, "Set-Cookie: ");
+	line = find_header(buf, "Set-Cookie: ");
 	if (line) {
 		if (strncmp(line, "SVPNCOOKIE=", 11) == 0) {
 			if (line[11] == ';' || line[11] == '\0') {
@@ -262,12 +316,90 @@ int auth_log_in(struct tunnel *tunnel)
 				end = strstr(line, ";");
 				if (end != NULL)
 					end[0] = '\0';
-				strncpy(tunnel->config->cookie, line,
-					COOKIE_SIZE);
+				strncpy(tunnel->config->cookie, line, COOKIE_SIZE);
+				tunnel->config->cookie[COOKIE_SIZE] = '\0';
 				ret = 1; // success
-				goto end;
 			}
 		}
+	}
+	return ret;
+}
+
+/*
+ * Authenticates to gateway by sending username and password.
+ *
+ * @return  1   in case of success
+ *          < 0 in case of error
+ */
+int auth_log_in(struct tunnel *tunnel)
+{
+	int ret;
+	char username[3 * FIELD_SIZE + 1];
+	char password[3 * FIELD_SIZE + 1];
+	char realm[3 * FIELD_SIZE + 1];
+	char reqid[32], polid[32], group[128];
+	char data[256], token[128], tokenresponse[256];
+	char *res;
+
+	url_encode(username, tunnel->config->username);
+	url_encode(password, tunnel->config->password);
+	url_encode(realm, tunnel->config->realm);
+
+	tunnel->config->cookie[0] = '\0';
+
+	snprintf(data, 256, "username=%s&credential=%s&realm=%s&ajax=1"
+	         "&redir=%%2Fremote%%2Findex&just_logged_in=1",
+	         username, password, realm);
+
+	ret = http_request(tunnel, "POST", "/remote/logincheck", data, &res);
+	if (ret != 1)
+		goto end;
+
+	if (strncmp(res, "HTTP/1.1 200 OK\r\n", 17)) {
+		ret = ERR_HTTP_BAD_RES_CODE;
+		goto end;
+	}
+	ret = get_auth_cookie(tunnel, res);
+	if (ret == ERR_HTTP_NO_COOKIE) {
+		/* If the response body includes a tokeninfo= parameter,
+		 * it means the VPN gateway expects two-factor authentication.
+		 * It sends a one-time authentication credential for example
+		 * by email or SMS, and expects to receive it back in the
+		 * second authentication stage. No SVPNCOOKIE will be provided
+		 * until after the second call to /remote/logincheck.
+		 *
+		 * If we receive neither a tokeninfo= parameter nor an
+		 * SVPNCOOKIE, it means our authentication attempt was
+		 * rejected.
+		 */
+
+		ret = get_value_from_response(res, "tokeninfo=", token, 128);
+		if (ret != 1 || strlen(token) < 1) {
+			// No SVPNCOOKIE and no tokeninfo, return error.
+			ret = ERR_HTTP_NO_COOKIE;
+			goto end;
+		}
+		// Two-factor authentication needed.
+		get_value_from_response(res, "grp=", group, 128);
+		get_value_from_response(res, "reqid=", reqid, 32);
+		get_value_from_response(res, "polid=", polid, 32);
+
+		read_password("2factor authentication token: ", tokenresponse, 255);
+
+		snprintf(data, 256, "username=%s&realm=%s&reqid=%s&polid=%s&grp=%s"
+		         "&code=%s&code2=&redir=%%2Fremote%%2Findex&just_logged_in=1",
+		         username, realm, reqid, polid, group, tokenresponse);
+
+		ret = http_request(tunnel, "POST", "/remote/logincheck", data, &res);
+		if (ret != 1)
+			goto end;
+
+		if (strncmp(res, "HTTP/1.1 200 OK\r\n", 17)) {
+			ret = ERR_HTTP_BAD_RES_CODE;
+			goto end;
+		}
+
+		ret = get_auth_cookie(tunnel, res);
 	}
 
 end:

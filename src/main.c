@@ -16,18 +16,19 @@
  */
 
 #include <getopt.h>
-#include <termios.h>
 
 #include "config.h"
 #include "log.h"
 #include "tunnel.h"
+#include "userinput.h"
 
 #define USAGE \
 "Usage: openfortivpn [<host>:<port>] [-u <user>] [-p <pass>]\n" \
-"                    [--no-routes] [--no-dns] [--pppd-log=<file>]\n" \
-"                    [--pppd-plugin=<file>] [--ca-file=<file>]\n" \
-"                    [--user-cert=<file>] [--user-key=<file>]\n" \
-"                    [--trusted-cert=<digest>] [-c <file>] [-v|-q]\n" \
+"                    [--realm=<realm>] [--no-routes] [--no-dns]\n" \
+"                    [--pppd-log=<file>] [--pppd-plugin=<file>]\n" \
+"                    [--ca-file=<file>] [--user-cert=<file>]\n" \
+"                    [--user-key=<file>] [--trusted-cert=<digest>]\n" \
+"                    [-c <file>] [-v|-q]\n" \
 "       openfortivpn --help\n" \
 "       openfortivpn --version\n"
 
@@ -49,6 +50,7 @@ USAGE \
 "  --no-routes                   Do not try to configure IP routes through the\n" \
 "                                VPN when tunnel is up.\n" \
 "  --no-dns                      Do not add VPN nameservers in /etc/resolv.conf\n" \
+"  --realm=<realm>               Use specified authentication realm on VPN gateway\n" \
 "                                when tunnel is up.\n" \
 "  --ca-file=<file>              Use specified PEM-encoded certificate bundle\n" \
 "                                instead of system-wide store to verify the gateway\n" \
@@ -85,37 +87,6 @@ USAGE \
 "      trusted-cert = certificatedigest4daa8c5fe6c...\n" \
 "      trusted-cert = othercertificatedigest6631bf...\n"
 
-static void read_password(const char *prompt, char *pass, size_t len)
-{
-	int masked = 0;
-	struct termios oldt, newt;
-	int i;
-
-	printf("%s", prompt);
-
-	// Try to hide user input
-	if (tcgetattr(STDIN_FILENO, &oldt) == 0) {
-		newt = oldt;
-		newt.c_lflag &= ~(ICANON | ECHO);
-		tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-		masked = 1;
-	}
-
-	for (i = 0; i < len - 1; i++) {
-		char c = getchar();
-		if (c == '\n' || c == EOF)
-			break;
-		pass[i] = c;
-	}
-	pass[i] = '\0';
-
-	if (masked) {
-		tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-	}
-
-	printf("\n");
-}
-
 int main(int argc, char **argv)
 {
 	int ret = EXIT_FAILURE;
@@ -137,6 +108,7 @@ int main(int argc, char **argv)
 		{"help",          no_argument,       0, 'h'},
 		{"version",       no_argument,       0, 0},
 		{"config",        required_argument, 0, 'c'},
+		{"realm",         required_argument, 0, 0},
 		{"username",      required_argument, 0, 'u'},
 		{"password",      required_argument, 0, 'p'},
 		{"no-routes",     no_argument, &cfg.set_routes, 0},
@@ -156,7 +128,7 @@ int main(int argc, char **argv)
 		int c, option_index = 0;
 
 		c = getopt_long(argc, argv, "hvqc:u:p:",
-		long_options, &option_index);
+		                long_options, &option_index);
 
 		/* Detect the end of the options. */
 		if (c == -1)
@@ -168,48 +140,54 @@ int main(int argc, char **argv)
 			if (long_options[option_index].flag != 0)
 				break;
 			if (strcmp(long_options[option_index].name,
-				   "version") == 0) {
+			           "version") == 0) {
 				printf(VERSION "\n");
 				ret = EXIT_SUCCESS;
 				goto exit;
 			}
 			if (strcmp(long_options[option_index].name,
-				   "pppd-log") == 0) {
+			           "pppd-log") == 0) {
 				cfg.pppd_log = optarg;
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
-				   "pppd-plugin") == 0) {
+			           "pppd-plugin") == 0) {
 				cfg.pppd_plugin = optarg;
 				break;
 			}
 			// --plugin is deprecated, --pppd-plugin should be used
 			if (cfg.pppd_plugin == NULL &&
 			    strcmp(long_options[option_index].name,
-				   "plugin") == 0) {
+			           "plugin") == 0) {
 				cfg.pppd_plugin = optarg;
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
-				   "ca-file") == 0) {
+			           "ca-file") == 0) {
 				cfg.ca_file = optarg;
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
-				   "user-cert") == 0) {
+			           "user-cert") == 0) {
 				cfg.user_cert = optarg;
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
-				   "user-key") == 0) {
+			           "user-key") == 0) {
 				cfg.user_key = optarg;
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
-				   "trusted-cert") == 0) {
+			           "realm") == 0) {
+				strncpy(cfg.realm, optarg, FIELD_SIZE);
+				cfg.realm[FIELD_SIZE] = '\0';
+				break;
+			}
+			if (strcmp(long_options[option_index].name,
+			           "trusted-cert") == 0) {
 				if (add_trusted_cert(&cfg, optarg))
 					log_warn("Could not add certificate "
-						 "digest to whitelist.\n");
+					         "digest to whitelist.\n");
 				break;
 			}
 			goto user_error;
@@ -242,8 +220,8 @@ int main(int argc, char **argv)
 
 	if (password != NULL)
 		log_warn("You should not pass the password on the command "
-			 "line. Type it interactively or use a config file "
-			 "instead.\n");
+		         "line. Type it interactively or use a config file "
+		         "instead.\n");
 
 	// Load config file
 	if (config_file[0] != '\0') {
@@ -252,7 +230,7 @@ int main(int argc, char **argv)
 			log_debug("Loaded config file \"%s\".\n", config_file);
 		else
 			log_warn("Could not load config file \"%s\" (%s).\n",
-				 config_file, err_cfg_str(ret));
+			         config_file, err_cfg_str(ret));
 	}
 
 	// Read host and port from the command line
@@ -264,7 +242,8 @@ int main(int argc, char **argv)
 			goto user_error;
 		}
 		port_str[0] = '\0';
-		strncpy(cfg.gateway_host, host, FIELD_SIZE - 1);
+		strncpy(cfg.gateway_host, host, FIELD_SIZE);
+		cfg.gateway_host[FIELD_SIZE] = '\0';
 		port_str++;
 		port = strtol(port_str, NULL, 0);
 		if (port <= 0 || port > 65535) {
@@ -274,10 +253,14 @@ int main(int argc, char **argv)
 		cfg.gateway_port = port;
 	}
 	// Read username and password from the command line
-	if (username != NULL)
-		strncpy(cfg.username, username, FIELD_SIZE - 1);
-	if (password != NULL)
-		strncpy(cfg.password, password, FIELD_SIZE - 1);
+	if (username != NULL) {
+		strncpy(cfg.username, username, FIELD_SIZE);
+		cfg.username[FIELD_SIZE] = '\0';
+	}
+	if (password != NULL) {
+		strncpy(cfg.password, password, FIELD_SIZE);
+		cfg.password[FIELD_SIZE] = '\0';
+	}
 
 	// Check host and port
 	if (cfg.gateway_host[0] == '\0' || cfg.gateway_port == 0) {
@@ -292,7 +275,7 @@ int main(int argc, char **argv)
 	// If no password given, interactively ask user
 	if (cfg.password[0] == '\0')
 		read_password("VPN account password: ", cfg.password,
-			      FIELD_SIZE);
+		              FIELD_SIZE);
 	// Check password
 	if (cfg.password[0] == '\0') {
 		log_error("Specify a password.\n");
@@ -300,13 +283,14 @@ int main(int argc, char **argv)
 	}
 
 	log_debug("Config host = \"%s\"\n", cfg.gateway_host);
+	log_debug("Config realm = \"%s\"\n", cfg.realm);
 	log_debug("Config port = \"%d\"\n", cfg.gateway_port);
 	log_debug("Config username = \"%s\"\n", cfg.username);
 	log_debug("Config password = \"%s\"\n", "********");
 
 	if (geteuid() != 0)
 		log_warn("This process was not spawned with root "
-				"privileges, this will probably not work.\n");
+		         "privileges, this will probably not work.\n");
 
 	if (run_tunnel(&cfg) == 0)
 		ret = EXIT_SUCCESS;

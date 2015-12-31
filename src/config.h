@@ -49,15 +49,16 @@ struct x509_digest {
 };
 
 #define FIELD_SIZE	64
-#define COOKIE_SIZE	(12 + 3 * (64 + 3))
+#define COOKIE_SIZE	300
 
 struct vpn_config {
-	char 		gateway_host[FIELD_SIZE];
+	char 		gateway_host[FIELD_SIZE + 1];
 	struct in_addr	gateway_ip;
 	uint16_t	gateway_port;
-	char		username[FIELD_SIZE];
-	char		password[FIELD_SIZE];
+	char		username[FIELD_SIZE + 1];
+	char		password[FIELD_SIZE + 1];
 	char		cookie[COOKIE_SIZE + 1];
+	char            realm[FIELD_SIZE + 1];
 
 	int	set_routes;
 	int	set_dns;
@@ -76,6 +77,7 @@ struct vpn_config {
 	do { \
 		(cfg)->gateway_host[0] = '\0'; \
 		(cfg)->gateway_port = 0; \
+		(cfg)->realm[0] = '\0'; \
 		(cfg)->username[0] = '\0'; \
 		(cfg)->password[0] = '\0'; \
 		(cfg)->pppd_log = NULL; \

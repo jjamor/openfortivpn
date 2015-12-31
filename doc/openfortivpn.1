@@ -44,6 +44,10 @@ VPN account username.
 \fB\-p \fI<pass>\fR, \fB\-\-password=\fI<pass>\fR
 VPN account password.
 .TP
+\fB\-\-realm=\fI<realm>\fR
+Connect to the specified authentication realm. Defaults to empty, which
+is usually what you want.
+.TP
 \fB\-\-no-routes\fR
 Do not try to configure IP routes through the VPN when tunnel is up.
 .TP
@@ -100,3 +104,7 @@ password = bar
 trusted-cert = certificatedigest4daa8c5fe6c...
 .br
 trusted-cert = othercertificatedigest6631bf...
+.br
+set-dns = 1
+.br
+set-routes = 1
