@@ -339,7 +339,7 @@ int auth_log_in(struct tunnel *tunnel)
 	char realm[3 * FIELD_SIZE + 1];
 	char reqid[32], polid[32], group[128];
 	char data[256], token[128], tokenresponse[256];
-	char *res;
+	char *res = NULL;
 
 	url_encode(username, tunnel->config->username);
 	url_encode(password, tunnel->config->password);
@@ -473,7 +473,7 @@ static int parse_xml_config(struct tunnel *tunnel, const char *buffer)
 static
 int parse_config(struct tunnel *tunnel, const char *buffer)
 {
-	char *c;
+	char *c, *end;
 
 	if (strncmp(buffer, "HTTP/1.1 200 OK\r\n", 17))
 		return ERR_HTTP_BAD_RES_CODE;
@@ -490,12 +490,19 @@ int parse_config(struct tunnel *tunnel, const char *buffer)
 		return 1;
 	buffer += 7;
 
+	end = strchr(buffer, '"');
+	if (end == NULL || end == buffer) {
+		log_info("No split VPN route\n");
+		return 1;
+	}
+
 	do {
 		char dest[16], mask[16];
 
 		c = strchr(buffer, '/');
-		if (!c) {
-			log_warn("Expected a /<mask>\n");
+		if (c == NULL || c >= end || c - buffer > 15) {
+			log_warn("Wrong addresses in split VPN route: "
+			         "expected <dest>/<mask>\n");
 			return 1;
 		}
 		memcpy(dest, buffer, c - buffer);
@@ -503,10 +510,12 @@ int parse_config(struct tunnel *tunnel, const char *buffer)
 		buffer = c + 1;
 
 		c = strchr(buffer, ',');
-		if (!c)
-			c = strchr(buffer, '"');
-		if (!c) {
-			log_warn("Expected a <mask>, or <mask>\"\n");
+		if (c == NULL || c > end)
+			c = end;
+
+		if (c - buffer > 15) {
+			log_warn("Wrong addresses in split VPN route: "
+			         "expected <dest>/<mask>\n");
 			return 1;
 		}
 		memcpy(mask, buffer, c - buffer);
@@ -515,7 +524,7 @@ int parse_config(struct tunnel *tunnel, const char *buffer)
 
 		ipv4_add_split_vpn_route(tunnel, dest, mask, NULL);
 
-	} while (*c == ',');
+	} while (c < end && *c == ',');
 
 	return 1;
 }
