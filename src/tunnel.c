@@ -408,7 +408,6 @@ int run_tunnel(struct vpn_config *config)
 	struct tunnel tunnel;
 
 	memset(&tunnel, 0, sizeof(tunnel));
-
 	tunnel.config = config;
 	tunnel.on_ppp_if_up = on_ppp_if_up;
 	tunnel.on_ppp_if_down = on_ppp_if_down;
