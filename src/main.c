@@ -24,7 +24,8 @@
 
 #define USAGE \
 "Usage: openfortivpn [<host>:<port>] [-u <user>] [-p <pass>]\n" \
-"                    [--realm=<realm>] [--no-routes] [--no-dns]\n" \
+"                    [--realm=<realm>] [--no-routes]\n" \
+"                    [--no-dns] [--pppd-no-peerdns]\n" \
 "                    [--pppd-log=<file>] [--pppd-plugin=<file>]\n" \
 "                    [--ca-file=<file>] [--user-cert=<file>]\n" \
 "                    [--user-key=<file>] [--trusted-cert=<digest>]\n" \
@@ -65,6 +66,15 @@ USAGE \
 "                                <digest> is the X509 certificate's sha256 sum.\n" \
 "                                This option can be used multiple times to trust\n" \
 "                                several certificates.\n" \
+"  --insecure-ssl                Do not disable insecure SSL protocols/ciphers.\n" \
+"                                If your server requires a specific cipher, consider\n" \
+"                                using --cipher-list instead.\n" \
+"  --cipher-list=<ciphers>       Openssl ciphers to use. If default does not work\n" \
+"                                you can try with the cipher suggested in the output\n" \
+"                                of 'openssl s_client -connect <host:port>'\n" \
+"                                (e.g. AES256-GCM-SHA384)\n" \
+"  --pppd-no-peerdns             Do not ask peer ppp server for DNS addresses\n" \
+"                                and do not make pppd rewrite /etc/resolv.conf\n" \
 "  --pppd-log=<file>             Set pppd in debug mode and save its logs into\n" \
 "                                <file>.\n" \
 "  --pppd-plugin=<file>          Use specified pppd plugin instead of configuring\n"\
@@ -103,23 +113,28 @@ int main(int argc, char **argv)
 	cfg.set_routes = 1;
 	cfg.set_dns = 1;
 	cfg.verify_cert = 1;
+	cfg.insecure_ssl = 0;
+	cfg.pppd_use_peerdns = 1;
 
 	struct option long_options[] = {
-		{"help",          no_argument,       0, 'h'},
-		{"version",       no_argument,       0, 0},
-		{"config",        required_argument, 0, 'c'},
-		{"realm",         required_argument, 0, 0},
-		{"username",      required_argument, 0, 'u'},
-		{"password",      required_argument, 0, 'p'},
-		{"no-routes",     no_argument, &cfg.set_routes, 0},
-		{"no-dns",        no_argument, &cfg.set_dns, 0},
-		{"ca-file",       required_argument, 0, 0},
-		{"user-cert",     required_argument, 0, 0},
-		{"user-key",      required_argument, 0, 0},
-		{"trusted-cert",  required_argument, 0, 0},
-		{"pppd-log",      required_argument, 0, 0},
-		{"pppd-plugin",   required_argument, 0, 0},
-		{"plugin",        required_argument, 0, 0}, // deprecated
+		{"help",            no_argument,       0, 'h'},
+		{"version",         no_argument,       0, 0},
+		{"config",          required_argument, 0, 'c'},
+		{"realm",           required_argument, 0, 0},
+		{"username",        required_argument, 0, 'u'},
+		{"password",        required_argument, 0, 'p'},
+		{"no-routes",       no_argument, &cfg.set_routes, 0},
+		{"no-dns",          no_argument, &cfg.set_dns, 0},
+		{"pppd-no-peerdns", no_argument, &cfg.pppd_use_peerdns, 0},
+		{"ca-file",         required_argument, 0, 0},
+		{"user-cert",       required_argument, 0, 0},
+		{"user-key",        required_argument, 0, 0},
+		{"trusted-cert",    required_argument, 0, 0},
+		{"insecure-ssl",    no_argument, &cfg.insecure_ssl, 1},
+		{"cipher-list",     required_argument, 0, 0},
+		{"pppd-log",        required_argument, 0, 0},
+		{"pppd-plugin",     required_argument, 0, 0},
+		{"plugin",          required_argument, 0, 0}, // deprecated
 		{0, 0, 0, 0}
 	};
 
@@ -164,17 +179,17 @@ int main(int argc, char **argv)
 			}
 			if (strcmp(long_options[option_index].name,
 			           "ca-file") == 0) {
-				cfg.ca_file = optarg;
+				cfg.ca_file = strdup(optarg);
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
 			           "user-cert") == 0) {
-				cfg.user_cert = optarg;
+				cfg.user_cert = strdup(optarg);
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
 			           "user-key") == 0) {
-				cfg.user_key = optarg;
+				cfg.user_key = strdup(optarg);
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
@@ -188,6 +203,11 @@ int main(int argc, char **argv)
 				if (add_trusted_cert(&cfg, optarg))
 					log_warn("Could not add certificate "
 					         "digest to whitelist.\n");
+				break;
+			}
+			if (strcmp(long_options[option_index].name,
+			           "cipher-list") == 0) {
+				cfg.cipher_list = strdup(optarg);
 				break;
 			}
 			goto user_error;

@@ -37,6 +37,7 @@ int add_trusted_cert(struct vpn_config *cfg, const char *digest)
 
 	new->next = NULL;
 	strncpy(new->data, digest, SHA256STRLEN - 1);
+	new->data [SHA256STRLEN - 1] = '\0';
 
 	if (cfg->cert_whitelist == NULL) {
 		cfg->cert_whitelist = new;
@@ -83,7 +84,7 @@ static int strtob(const char* str)
  */
 int load_config(struct vpn_config *cfg, const char *filename)
 {
-	int ret = -1;
+	int ret = ERR_CFG_UNKNOWN;
 	FILE *file;
 	struct stat stat;
 	char *buffer, *line;
@@ -186,6 +187,14 @@ int load_config(struct vpn_config *cfg, const char *filename)
 				continue;
 			}
 			cfg->set_routes = set_routes;
+		} else if (strcmp(key, "pppd-use-peerdns") == 0) {
+			int pppd_use_peerdns = strtob(val);
+			if (pppd_use_peerdns < 0) {
+				log_warn("Bad pppd-use-peerdns in config file: \"%s\".\n",
+				         val);
+				continue;
+			}
+			cfg->pppd_use_peerdns = pppd_use_peerdns;
 		} else if (strcmp(key, "trusted-cert") == 0) {
 			if (strlen(val) != SHA256STRLEN - 1) {
 				log_warn("Bad certificate sha256 digest in "
@@ -195,6 +204,23 @@ int load_config(struct vpn_config *cfg, const char *filename)
 			if (add_trusted_cert(cfg, val))
 				log_warn("Could not add certificate digest to "
 				         "whitelist.\n");
+
+		} else if (strcmp(key, "ca-file") == 0) {
+			cfg->ca_file = strdup(val);
+		} else if (strcmp(key, "user-cert") == 0) {
+			cfg->user_cert = strdup(val);
+		} else if (strcmp(key, "user-key") == 0) {
+			cfg->user_key = strdup(val);
+		} else if (strcmp(key, "insecure-ssl") == 0) {
+			int insecure_ssl = strtob(val);
+			if (insecure_ssl < 0) {
+				log_warn("Bad insecure-ssl in config file: \"%s\".\n",
+				         val);
+				continue;
+			}
+			cfg->insecure_ssl = insecure_ssl;
+		} else if (strcmp(key, "cipher-list") == 0) {
+			cfg->cipher_list = strdup(val);
 		} else {
 			log_warn("Bad key in config file: \"%s\".\n", key);
 			goto err_free;

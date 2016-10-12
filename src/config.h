@@ -22,9 +22,10 @@
 #include <netinet/in.h>
 #include <string.h>
 
-#define ERR_CFG_SEE_ERRNO	-1
-#define ERR_CFG_EMPTY_FILE	-2
-#define ERR_CFG_NO_MEM		-3
+#define ERR_CFG_UNKNOWN		-1
+#define ERR_CFG_SEE_ERRNO	-2
+#define ERR_CFG_EMPTY_FILE	-3
+#define ERR_CFG_NO_MEM		-4
 #define ERR_CFG_CANNOT_READ	-4
 
 static inline const char *err_cfg_str(int code)
@@ -62,6 +63,7 @@ struct vpn_config {
 
 	int	set_routes;
 	int	set_dns;
+	int     pppd_use_peerdns;
 
 	char	*pppd_log;
 	char	*pppd_plugin;
@@ -70,6 +72,8 @@ struct vpn_config {
 	char	                *user_cert;
 	char	                *user_key;
 	int			verify_cert;
+	int			insecure_ssl;
+	char			*cipher_list;
 	struct x509_digest	*cert_whitelist;
 };
 
@@ -85,6 +89,7 @@ struct vpn_config {
 		(cfg)->ca_file = NULL; \
 		(cfg)->user_cert = NULL; \
 		(cfg)->user_key = NULL; \
+		(cfg)->cipher_list = NULL; \
 		(cfg)->cert_whitelist = NULL; \
 	} while (0)
 
@@ -93,7 +98,11 @@ struct vpn_config {
 		struct x509_digest *tmp = (cfg)->cert_whitelist->next; \
 		free((cfg)->cert_whitelist); \
 		(cfg)->cert_whitelist = tmp; \
-	}
+	} \
+	free((cfg)->ca_file); \
+	free((cfg)->user_cert); \
+	free((cfg)->user_key); \
+	free((cfg)->cipher_list);
 
 int add_trusted_cert(struct vpn_config *cfg, const char *digest);
 
