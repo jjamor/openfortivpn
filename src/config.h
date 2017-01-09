@@ -58,12 +58,14 @@ struct vpn_config {
 	uint16_t	gateway_port;
 	char		username[FIELD_SIZE + 1];
 	char		password[FIELD_SIZE + 1];
+	char		otp[FIELD_SIZE + 1];
 	char		cookie[COOKIE_SIZE + 1];
 	char            realm[FIELD_SIZE + 1];
 
 	int	set_routes;
 	int	set_dns;
 	int     pppd_use_peerdns;
+	int     use_syslog;
 
 	char	*pppd_log;
 	char	*pppd_plugin;
@@ -91,6 +93,7 @@ struct vpn_config {
 		(cfg)->user_key = NULL; \
 		(cfg)->cipher_list = NULL; \
 		(cfg)->cert_whitelist = NULL; \
+		(cfg)->use_syslog = 0; \
 	} while (0)
 
 #define destroy_vpn_config(cfg) \
