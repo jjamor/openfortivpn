@@ -165,6 +165,8 @@ int ppp_interface_is_up(struct tunnel *tunnel)
 {
 	struct ifaddrs *ifap, *ifa;
 
+	log_debug("Got Address: %s\n", inet_ntoa(tunnel->ipv4.ip_addr));
+
 	if (getifaddrs(&ifap)) {
 		log_error("getifaddrs: %s\n", strerror(errno));
 		return 0;
@@ -173,10 +175,21 @@ int ppp_interface_is_up(struct tunnel *tunnel)
 	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
 		if (strstr(ifa->ifa_name, "ppp") != NULL
 		    && ifa->ifa_flags & IFF_UP) {
-			strncpy(tunnel->ppp_iface, ifa->ifa_name,
-			        ROUTE_IFACE_LEN - 1);
-			freeifaddrs(ifap);
-			return 1;
+			if (&(ifa->ifa_addr->sa_family) != NULL
+			    && ifa->ifa_addr->sa_family == AF_INET) {
+				struct in_addr if_ip_addr =
+				        cast_addr(ifa->ifa_addr)->sin_addr;
+
+				log_debug("Interface Name: %s\n", ifa->ifa_name);
+				log_debug("Interface Addr: %s\n", inet_ntoa(if_ip_addr));
+
+				if (tunnel->ipv4.ip_addr.s_addr == if_ip_addr.s_addr) {
+					strncpy(tunnel->ppp_iface, ifa->ifa_name,
+					        ROUTE_IFACE_LEN - 1);
+					freeifaddrs(ifap);
+					return 1;
+				}
+			}
 		}
 	}
 	freeifaddrs(ifap);
@@ -347,6 +360,11 @@ int ssl_connect(struct tunnel *tunnel)
 		log_error("SSL_CTX_new: %s\n",
 		          ERR_error_string(ERR_peek_last_error(), NULL));
 		return 1;
+	}
+
+	// Load the OS default CA files
+	if (!SSL_CTX_set_default_verify_paths(tunnel->ssl_context)) {
+		log_error("Could not load OS OpenSSL files.\n");
 	}
 
 	if (tunnel->config->ca_file) {
