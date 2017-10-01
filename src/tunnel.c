@@ -48,8 +48,16 @@ static int on_ppp_if_up(struct tunnel *tunnel)
 	log_info("Interface %s is UP.\n", tunnel->ppp_iface);
 
 	if (tunnel->config->set_routes) {
+		int ret;
+
 		log_info("Setting new routes...\n");
-		ipv4_set_tunnel_routes(tunnel);
+
+		ret = ipv4_set_tunnel_routes(tunnel);
+
+		if (ret != 0) {
+			log_warn("Adding route table is incomplete. "
+			         "Please check route table.\n");
+		}
 	}
 
 	if (tunnel->config->set_dns) {
@@ -105,11 +113,12 @@ static int pppd_run(struct tunnel *tunnel)
 			"nodefaultroute", ":1.1.1.1", "nodetach",
 			"lcp-max-configure", "40", "mru", "1354",
 			NULL, NULL, NULL, NULL,
-			NULL, NULL, NULL
+			NULL, NULL, NULL, NULL,
+			NULL
 		};
 		// Dynamically get first NULL pointer so that changes of
 		// args above don't need code changes here
-		int i = sizeof (args) / sizeof (*args) - 1;
+		int i = sizeof(args) / sizeof(*args) - 1;
 		for (; args [i] == NULL; i--)
 			;
 		i++;
@@ -126,14 +135,17 @@ static int pppd_run(struct tunnel *tunnel)
 			args[i++] = "plugin";
 			args[i++] = tunnel->config->pppd_plugin;
 		}
+		if (tunnel->config->pppd_ipparam) {
+			args[i++] = "ipparam";
+			args[i++] = tunnel->config->pppd_ipparam;
+		}
 		// Assert that we didn't use up all NULL pointers above
-		assert (i < sizeof (args) / sizeof (*args));
+		assert(i < sizeof(args) / sizeof(*args));
 
 		close(tunnel->ssl_socket);
-		if (execvp(args[0], args) == -1) {
-			log_error("execvp: %s\n", strerror(errno));
-			return 1;
-		}
+		execvp(args[0], args);
+		fprintf(stderr, "execvp: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
 	}
 
 	// Set non-blocking
@@ -156,7 +168,14 @@ static int pppd_terminate(struct tunnel *tunnel)
 	close(tunnel->pppd_pty);
 
 	log_debug("Waiting for pppd to exit...\n");
-	waitpid(tunnel->pppd_pid, NULL, 0);
+	int status;
+	if (waitpid(tunnel->pppd_pid, &status, 0) == -1) {
+		log_error("waitpid: %s\n", strerror(errno));
+		return 1;
+	}
+	if (WIFEXITED(status)) {
+		log_debug("waitpid: pppd exit status code %d\n", WEXITSTATUS(status));
+	}
 
 	return 0;
 }
@@ -344,7 +363,7 @@ static void ssl_disconnect(struct tunnel *tunnel)
  */
 int ssl_connect(struct tunnel *tunnel)
 {
-	ssl_disconnect (tunnel);
+	ssl_disconnect(tunnel);
 
 	tunnel->ssl_socket = tcp_connect(tunnel);
 	if (tunnel->ssl_socket == -1)
@@ -473,10 +492,6 @@ int run_tunnel(struct vpn_config *config)
 	struct tunnel tunnel;
 
 	memset(&tunnel, 0, sizeof(tunnel));
-#ifdef __APPLE__
-	// initialize value
-	tunnel.ipv4.split_routes = 0;
-#endif
 	tunnel.config = config;
 	tunnel.on_ppp_if_up = on_ppp_if_up;
 	tunnel.on_ppp_if_down = on_ppp_if_down;
@@ -575,5 +590,10 @@ err_tunnel:
 		log_info("Logged out.\n");
 	}
 
+	// explicitly free the buffer allocated for split routes of the ipv4 config
+	if (tunnel.ipv4.split_rt != NULL) {
+		free(tunnel.ipv4.split_rt);
+		tunnel.ipv4.split_rt = NULL;
+	}
 	return ret;
 }
