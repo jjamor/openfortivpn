@@ -15,18 +15,19 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _CONFIG_H
-#define _CONFIG_H
+#ifndef _OPENFORTIVPN_CONFIG_H
+#define _OPENFORTIVPN_CONFIG_H
 
 #include <errno.h>
-#include <netinet/in.h>
 #include <string.h>
+#include <sys/types.h>
+#include <netinet/in.h>
 
 #define ERR_CFG_UNKNOWN		-1
 #define ERR_CFG_SEE_ERRNO	-2
 #define ERR_CFG_EMPTY_FILE	-3
 #define ERR_CFG_NO_MEM		-4
-#define ERR_CFG_CANNOT_READ	-4
+#define ERR_CFG_CANNOT_READ	-5
 
 static inline const char *err_cfg_str(int code)
 {
@@ -50,17 +51,17 @@ struct x509_digest {
 };
 
 #define FIELD_SIZE	64
-#define COOKIE_SIZE	300
+#define COOKIE_SIZE	4096
 
 struct vpn_config {
-	char 		gateway_host[FIELD_SIZE + 1];
+	char		gateway_host[FIELD_SIZE + 1];
 	struct in_addr	gateway_ip;
 	uint16_t	gateway_port;
 	char		username[FIELD_SIZE + 1];
 	char		password[FIELD_SIZE + 1];
 	char		otp[FIELD_SIZE + 1];
 	char		cookie[COOKIE_SIZE + 1];
-	char            realm[FIELD_SIZE + 1];
+	char		realm[FIELD_SIZE + 1];
 
 	int	set_routes;
 	int	set_dns;
@@ -68,9 +69,12 @@ struct vpn_config {
 	int     use_syslog;
 	int	half_internet_routes;
 
+	unsigned int	persistent;
+
 	char	*pppd_log;
 	char	*pppd_plugin;
 	char	*pppd_ipparam;
+	char	*pppd_ifname;
 
 	char	                *ca_file;
 	char	                *user_cert;
@@ -80,46 +84,6 @@ struct vpn_config {
 	char			*cipher_list;
 	struct x509_digest	*cert_whitelist;
 };
-
-#define init_vpn_config(cfg) \
-	do { \
-		(cfg)->gateway_host[0] = '\0'; \
-		(cfg)->gateway_port = 0; \
-		(cfg)->username[0] = '\0'; \
-		(cfg)->password[0] = '\0'; \
-		(cfg)->otp[0] = '\0'; \
-		(cfg)->cookie[0] = '\0'; \
-		(cfg)->realm[0] = '\0'; \
-		(cfg)->set_routes = 1; \
-		(cfg)->set_dns = 1; \
-		(cfg)->pppd_use_peerdns = 1; \
-		(cfg)->half_internet_routes = 0; \
-		(cfg)->use_syslog = 0; \
-		(cfg)->pppd_log = NULL; \
-		(cfg)->pppd_plugin = NULL; \
-		(cfg)->pppd_ipparam = NULL; \
-		(cfg)->ca_file = NULL; \
-		(cfg)->user_cert = NULL; \
-		(cfg)->user_key = NULL; \
-		(cfg)->verify_cert = 1; \
-		(cfg)->insecure_ssl = 0; \
-		(cfg)->cipher_list = NULL; \
-		(cfg)->cert_whitelist = NULL; \
-	} while (0)
-
-#define destroy_vpn_config(cfg) \
-	while ((cfg)->cert_whitelist != NULL) { \
-		struct x509_digest *tmp = (cfg)->cert_whitelist->next; \
-		free((cfg)->cert_whitelist); \
-		(cfg)->cert_whitelist = tmp; \
-	} \
-	free((cfg)->pppd_log); \
-	free((cfg)->pppd_ipparam); \
-	free((cfg)->pppd_plugin); \
-	free((cfg)->ca_file); \
-	free((cfg)->user_cert); \
-	free((cfg)->user_key); \
-	free((cfg)->cipher_list);
 
 int add_trusted_cert(struct vpn_config *cfg, const char *digest);
 int strtob(const char *str);

@@ -15,15 +15,16 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "log.h"
+
 #include <pthread.h>
+#include <syslog.h>
+#include <unistd.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <syslog.h>
-
-#include "log.h"
+#include <errno.h>
 
 static pthread_mutex_t mutex;
 static int do_syslog = 0;
@@ -38,7 +39,7 @@ struct log_param_s {
 	int syslog_prio;
 };
 
-static struct log_param_s log_params [OFV_LOG_DEBUG_PACKETS + 1] = {
+static const struct log_param_s log_params[OFV_LOG_DEBUG_PACKETS + 1] = {
 	{ "        ", "",           LOG_ERR},
 	{ "ERROR:  ", "\033[0;31m", LOG_ERR},
 	{ "WARN:   ", "\033[0;33m", LOG_WARNING},
@@ -47,7 +48,7 @@ static struct log_param_s log_params [OFV_LOG_DEBUG_PACKETS + 1] = {
 	{ "DEBUG:  ", "\033[0;90m", LOG_DEBUG},
 };
 
-void init_logging()
+void init_logging(void)
 {
 	pthread_mutexattr_t mutexattr;
 	loglevel = OFV_LOG_INFO;
@@ -68,12 +69,12 @@ void set_syslog(int use_syslog)
 	openlog("openfortivpn", LOG_PID, LOG_DAEMON);
 }
 
-void increase_verbosity()
+void increase_verbosity(void)
 {
 	if (loglevel < OFV_LOG_DEBUG_PACKETS)
 		loglevel++;
 }
-void decrease_verbosity()
+void decrease_verbosity(void)
 {
 	if (loglevel > OFV_LOG_MUTE)
 		loglevel--;
@@ -82,14 +83,14 @@ void decrease_verbosity()
 void do_log(int verbosity, const char *format, ...)
 {
 	va_list args;
-	struct log_param_s *lp = NULL;
+	const struct log_param_s *lp = NULL;
 
 	pthread_mutex_lock(&mutex);
 
 	// Use sane default if wrong verbosity specified
 	if (verbosity > OFV_LOG_DEBUG || verbosity < 0)
 		verbosity = OFV_LOG_MUTE;
-	lp = &log_params [verbosity];
+	lp = &log_params[verbosity];
 
 	if (!do_syslog)
 		printf("%s%s", is_a_tty ? lp->color_string : "", lp->prefix);
@@ -118,15 +119,14 @@ void do_log_packet(const char *prefix, size_t len, const uint8_t *packet)
 
 	str = malloc(strlen(prefix) + 3 * len + 1 + 1);
 	if (str == NULL) {
-		log_error("malloc failed\n");
+		log_error("malloc: %s\n", strerror(errno));
 		return;
 	}
 
 	pos = strcpy(str, prefix);
 	pos += strlen(str);
-	for (i = 0; i < len; i++) {
+	for (i = 0; i < len; i++)
 		pos += sprintf(pos, "%02x ", packet[i]);
-	}
 	strcpy(pos - 1, "\n");
 
 	if (do_syslog)

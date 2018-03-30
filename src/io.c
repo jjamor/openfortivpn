@@ -26,10 +26,18 @@
  *  all source files in the program, then also delete it here.
  */
 
+#include "io.h"
+#include "hdlc.h"
+#include "ssl.h"
+#include "tunnel.h"
+#include "log.h"
+
+#include <signal.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
-#include <pthread.h>
-#include <signal.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
 
 #ifdef __APPLE__
 
@@ -57,11 +65,6 @@ typedef sem_t os_semaphore_t;
 
 #endif
 
-#include "hdlc.h"
-#include "log.h"
-#include "ssl.h"
-#include "tunnel.h"
-
 #define PKT_BUF_SZ 0x1000
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -74,11 +77,11 @@ static void lock_callback(int mode, int type, char *file, int line)
 	else
 		pthread_mutex_unlock(&(lockarray[type]));
 }
-static unsigned long thread_id()
+static unsigned long thread_id(void)
 {
 	return (unsigned long) pthread_self();
 }
-static void init_ssl_locks()
+static void init_ssl_locks(void)
 {
 	int i;
 	lockarray = (pthread_mutex_t *) OPENSSL_malloc(CRYPTO_num_locks() *
@@ -88,7 +91,7 @@ static void init_ssl_locks()
 	CRYPTO_set_id_callback((unsigned long (*)()) thread_id);
 	CRYPTO_set_locking_callback((void (*)()) lock_callback);
 }
-static void destroy_ssl_locks()
+static void destroy_ssl_locks(void)
 {
 	int i;
 	CRYPTO_set_locking_callback(NULL);
@@ -97,14 +100,22 @@ static void destroy_ssl_locks()
 	OPENSSL_free(lockarray);
 }
 #else
-static void init_ssl_locks()
+static void init_ssl_locks(void)
 {
 }
 
-static void destroy_ssl_locks()
+static void destroy_ssl_locks(void)
 {
 }
 #endif
+
+// global variable to pass signal out of its handler
+volatile sig_atomic_t sig_received = 0;
+
+int get_sig_received(void)
+{
+	return (int)sig_received;
+}
 
 /*
  * Adds a new packet to a pool.
@@ -173,7 +184,7 @@ static void *pppd_read(void *arg)
 	FD_ZERO(&read_fd);
 	FD_SET(tunnel->pppd_pty, &read_fd);
 
-	log_debug("pppd_read_thread\n");
+	log_debug("%s thread\n", __func__);
 
 	// Wait for pppd to be ready
 	off_w = 0;
@@ -210,14 +221,14 @@ static void *pppd_read(void *arg)
 			ssize_t frm_len, pktsize;
 			struct ppp_packet *packet, *repacket;
 
-			if ((frm_len = hdlc_find_frame(buf, off_w, &off_r))
-			    == ERR_HDLC_NO_FRAME_FOUND)
+			frm_len = hdlc_find_frame(buf, off_w, &off_r);
+			if (frm_len == ERR_HDLC_NO_FRAME_FOUND)
 				break;
 
 			pktsize = estimated_decoded_size(frm_len);
 			packet = malloc(sizeof(*packet) + 6 + pktsize);
 			if (packet == NULL) {
-				log_warn("malloc failed.\n");
+				log_error("malloc: %s\n", strerror(errno));
 				break;
 			}
 
@@ -251,9 +262,8 @@ static void *pppd_read(void *arg)
 		}
 
 		// Do not discard remaining data
-		if (off_r > 0 && off_r < off_w) {
+		if (off_r > 0 && off_r < off_w)
 			memmove(buf, &buf[off_r], off_w - off_r);
-		}
 		off_w = off_w - off_r;
 	}
 
@@ -278,7 +288,7 @@ static void *pppd_write(void *arg)
 	// Write for pppd to talk first, otherwise unpredictable
 	SEM_WAIT(&sem_pppd_ready);
 
-	log_debug("pppd_write thread\n");
+	log_debug("%s thread\n", __func__);
 
 	while (1) {
 		struct ppp_packet *packet;
@@ -291,7 +301,7 @@ static void *pppd_write(void *arg)
 		hdlc_bufsize = estimated_encoded_size(packet->len);
 		hdlc_buffer = malloc(hdlc_bufsize);
 		if (hdlc_buffer == NULL) {
-			log_warn("malloc failed.\n");
+			log_error("malloc: %s\n", strerror(errno));
 			break;
 		}
 		len = hdlc_encode(hdlc_buffer, hdlc_bufsize,
@@ -404,7 +414,7 @@ static void *ssl_read(void *arg)
 	struct tunnel *tunnel = (struct tunnel *) arg;
 	//uint8_t buf[PKT_BUF_SZ];
 
-	log_debug("ssl_read_thread\n");
+	log_debug("%s thread\n", __func__);
 
 	while (1) {
 		struct ppp_packet *packet;
@@ -430,7 +440,7 @@ static void *ssl_read(void *arg)
 
 		packet = malloc(sizeof(struct ppp_packet) + 6 + size);
 		if (packet == NULL) {
-			log_error("malloc failed\n");
+			log_error("malloc: %s\n", strerror(errno));
 			break;
 		}
 		memcpy(pkt_header(packet), header, 6);
@@ -451,14 +461,14 @@ static void *ssl_read(void *arg)
 
 		if (tunnel->state == STATE_CONNECTING) {
 			if (packet_is_ip_plus_dns(packet)) {
-				char line[128];
+				char line[57]; // 1 + 15 + 7 + 15 + 2 + 15 + 1 + 1
 				set_tunnel_ips(tunnel, packet);
 				strcpy(line, "[");
-				strcat(line, inet_ntoa(tunnel->ipv4.ip_addr));
+				strncat(line, inet_ntoa(tunnel->ipv4.ip_addr), 15);
 				strcat(line, "], ns [");
-				strcat(line, inet_ntoa(tunnel->ipv4.ns1_addr));
+				strncat(line, inet_ntoa(tunnel->ipv4.ns1_addr), 15);
 				strcat(line, ", ");
-				strcat(line, inet_ntoa(tunnel->ipv4.ns2_addr));
+				strncat(line, inet_ntoa(tunnel->ipv4.ns2_addr), 15);
 				strcat(line, "]");
 				log_info("Got addresses: %s\n", line);
 			} else if (packet_is_end_negociation(packet)) {
@@ -481,7 +491,7 @@ static void *ssl_write(void *arg)
 {
 	struct tunnel *tunnel = (struct tunnel *) arg;
 
-	log_debug("ssl_write_thread\n");
+	log_debug("%s thread\n", __func__);
 
 	while (1) {
 		struct ppp_packet *packet;
@@ -524,7 +534,7 @@ static void *if_config(void *arg)
 	struct tunnel *tunnel = (struct tunnel *) arg;
 	int timeout = 60000000; // one minute
 
-	log_debug("if_config thread\n");
+	log_debug("%s thread\n", __func__);
 
 	// Wait for the right moment to configure IP interface
 	SEM_WAIT(&sem_if_config);
@@ -557,6 +567,7 @@ error:
 
 static void sig_handler(int signo)
 {
+	sig_received = signo;
 	if (signo == SIGINT || signo == SIGTERM)
 		SEM_POST(&sem_stop_io);
 }
@@ -591,8 +602,11 @@ int io_loop(struct tunnel *tunnel)
 	 *   - openfortivpn, Python version:       ~ 2000 kbit/s
 	 *     (with or without TCP_NODELAY)
 	 */
-	setsockopt(tunnel->ssl_socket, IPPROTO_TCP, TCP_NODELAY,
-	           (char *) &tcp_nodelay_flag, sizeof(int));
+	if (setsockopt(tunnel->ssl_socket, IPPROTO_TCP, TCP_NODELAY,
+	               (char *) &tcp_nodelay_flag, sizeof(int))) {
+		log_error("setsockopt: %s\n", strerror(errno));
+		goto err_sockopt;
+	}
 
 // on osx this prevents the program from being stopped with ctrl-c
 #ifndef __APPLE__
@@ -658,5 +672,6 @@ int io_loop(struct tunnel *tunnel)
 
 err_thread:
 err_signal:
+err_sockopt:
 	return 1;
 }

@@ -15,10 +15,14 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _IPV4_H
-#define _IPV4_H
+#ifndef _OPENFORTIVPN_IPV4_H
+#define _OPENFORTIVPN_IPV4_H
+
+#include <netinet/in.h>
+#include <net/route.h>
 
 #ifdef __APPLE__
+#include <sys/socket.h>
 
 /* This structure gets passed by the SIOCADDRT and SIOCDELRT calls. */
 struct rtentry {
@@ -33,33 +37,11 @@ struct rtentry {
 	short           rt_metric;      /* +1 for binary compatibility! */
 	char            *rt_dev;        /* forcing the device at add    */
 	unsigned long   rt_mss;         /* per route MTU/Window         */
-	unsigned long   rt_mtu;         /* compatibility 		*/
+	unsigned long   rt_mtu;         /* compatibility                */
 	unsigned long   rt_window;      /* Window clamping              */
 	unsigned short  rt_irtt;        /* Initial RTT                  */
 };
 #endif
-#include <net/route.h>
-
-#define ERR_IPV4_SEE_ERRNO	-1
-#define ERR_IPV4_NO_MEM		-2
-#define ERR_IPV4_PERMISSION	-3
-#define ERR_IPV4_NO_SUCH_ROUTE	-4
-#define ERR_IPV4_PROC_NET_ROUTE	-5
-
-static inline const char *err_ipv4_str(int code)
-{
-	if (code == ERR_IPV4_SEE_ERRNO)
-		return strerror(errno);
-	else if (code == ERR_IPV4_NO_MEM)
-		return "Not enough memory";
-	else if (code == ERR_IPV4_PERMISSION)
-		return "Permission denied";
-	else if (code == ERR_IPV4_NO_SUCH_ROUTE)
-		return "Route not found";
-	else if (code == ERR_IPV4_PROC_NET_ROUTE)
-		return "Parsing /proc/net/route failed";
-	return "unknown";
-}
 
 #define ROUTE_IFACE_LEN 32
 #define MAX_SPLIT_ROUTES 65535
