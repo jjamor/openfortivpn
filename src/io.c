@@ -70,7 +70,7 @@ typedef sem_t os_semaphore_t;
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 static pthread_mutex_t *lockarray;
 
-static void lock_callback(int mode, int type, char *file, int line)
+static void lock_callback(int mode, int type, const char *file, int line)
 {
 	if (mode & CRYPTO_LOCK)
 		pthread_mutex_lock(&(lockarray[type]));
@@ -235,8 +235,7 @@ static void *pppd_read(void *arg)
 			pktsize = hdlc_decode(&buf[off_r], frm_len,
 			                      pkt_data(packet), pktsize);
 			if (pktsize < 0) {
-				log_error("Failed to decode PPP packet from "
-				          "HDLC frame (%s).\n",
+				log_error("Failed to decode PPP packet from HDLC frame (%s).\n",
 				          (pktsize == ERR_HDLC_BAD_CHECKSUM ?
 				           "bad checksum" :
 				           (pktsize == ERR_HDLC_INVALID_FRAME ?
@@ -307,8 +306,7 @@ static void *pppd_write(void *arg)
 		len = hdlc_encode(hdlc_buffer, hdlc_bufsize,
 		                  pkt_data(packet), packet->len);
 		if (len < 0) {
-			log_error("Failed to encode PPP packet into HDLC "
-			          "frame.\n");
+			log_error("Failed to encode PPP packet into HDLC frame.\n");
 			goto err_free_buf;
 		}
 
@@ -402,7 +400,7 @@ static void debug_bad_packet(struct tunnel *tunnel, uint8_t *header)
 			buffer[i] = '.';
 	buffer[i] = buffer[256 - 1] = '\0';
 
-	printf("  (raw) %s\n", (char *) buffer);
+	printf("  (raw) %s\n", (const char *) buffer);
 }
 
 /*
@@ -547,11 +545,10 @@ static void *if_config(void *arg)
 			tunnel->state = STATE_UP;
 			break;
 		} else if (timeout == 0) {
-			log_error("Timed out waiting for the ppp interface to "
-			          "be UP.\n");
+			log_error("Timed out waiting for the ppp interface to be UP.\n");
 			break;
 		}
-		log_debug("if_config: not ready yet...\n");
+		log_debug("%s: not ready yet...\n", __func__);
 		timeout -= 200000;
 		usleep(200000);
 	}
@@ -603,7 +600,7 @@ int io_loop(struct tunnel *tunnel)
 	 *     (with or without TCP_NODELAY)
 	 */
 	if (setsockopt(tunnel->ssl_socket, IPPROTO_TCP, TCP_NODELAY,
-	               (char *) &tcp_nodelay_flag, sizeof(int))) {
+	               (const char *) &tcp_nodelay_flag, sizeof(int))) {
 		log_error("setsockopt: %s\n", strerror(errno));
 		goto err_sockopt;
 	}
