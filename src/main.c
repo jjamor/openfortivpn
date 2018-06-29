@@ -33,6 +33,7 @@
 "                    [--half-internet-routes=<0|1>] [--set-dns=<0|1>]\n" \
 "                    [--pppd-no-peerdns] [--pppd-log=<file>]\n" \
 "                    [--pppd-ifname=<string>] [--pppd-ipparam=<string>]\n" \
+"                    [--pppd-call=<name>]\n" \
 "                    [--pppd-plugin=<file>] [--ca-file=<file>]\n" \
 "                    [--user-cert=<file>] [--user-key=<file>]\n" \
 "                    [--trusted-cert=<digest>] [--use-syslog]\n" \
@@ -41,12 +42,14 @@
 "       openfortivpn --version\n" \
 "\n"
 
-#define help_options \
+#define summary \
 "Client for PPP+SSL VPN tunnel services.\n" \
 "openfortivpn connects to a VPN by setting up a tunnel to the gateway at\n" \
 "<host>:<port>. It spawns a pppd process and operates the communication between\n" \
 "the gateway and this process.\n" \
-"\n" \
+"\n"
+
+#define help_options \
 "Options:\n" \
 "  -h --help                     Show this help message and exit.\n" \
 "  --version                     Show version and exit.\n" \
@@ -57,11 +60,12 @@
 "  -o <otp>, --otp=<otp>         One-Time-Password.\n" \
 "  --realm=<realm>               Use specified authentication realm on VPN gateway\n" \
 "                                when tunnel is up.\n" \
-"  --set-routes=[01]             Set if we should configure output roues through\n" \
+"  --set-routes=[01]             Set if openfortivpn should configure output roues through\n" \
 "                                the VPN when tunnel is up.\n" \
 "  --no-routes                   Do not configure routes, same as --set-routes=0.\n" \
-"  --half-internet-routes=[01]   Add /1-routes instead of replacing the default route\n" \
-"  --set-dns=[01]                Set if we should add VPN name servers in\n" \
+"  --half-internet-routes=[01]   Add two 0.0.0.0/1 and 128.0.0.0/1 routes with higher\n" \
+"                                priority instead of replacing the default route.\n" \
+"  --set-dns=[01]                Set if openfortivpn should add VPN name servers in\n" \
 "                                /etc/resolv.conf\n" \
 "  --no-dns                      Do not reconfigure DNS, same as --set-dns=0\n" \
 "  --ca-file=<file>              Use specified PEM-encoded certificate bundle\n" \
@@ -94,6 +98,9 @@
 "  --pppd-ifname=<string>        Set the pppd interface name, if supported by pppd.\n" \
 "  --pppd-ipparam=<string>       Provides  an extra parameter to the ip-up, ip-pre-up\n" \
 "                                and ip-down scripts. See man (8) pppd\n" \
+"  --pppd-call=<name>            Move most pppd options from pppd cmdline to\n" \
+"                                /etc/ppp/peers/<name> and invoke pppd with\n" \
+"                                'call <name>'\n" \
 "  --persistent=<interval>       Run the vpn persistently in a loop and try to re-\n" \
 "                                connect every <interval> seconds when dropping out\n" \
 "  -v                            Increase verbosity. Can be used multiple times\n" \
@@ -138,8 +145,8 @@ static inline void destroy_vpn_config(struct vpn_config *cfg)
 int main(int argc, char **argv)
 {
 	int ret = EXIT_FAILURE;
-	char *config_file = SYSCONFDIR"/openfortivpn/config";
-	char *host, *username = NULL, *password = NULL, *otp = NULL;
+	const char *config_file = SYSCONFDIR"/openfortivpn/config";
+	const char *host, *username = NULL, *password = NULL, *otp = NULL;
 	char *port_str;
 	long int port;
 
@@ -160,6 +167,7 @@ int main(int argc, char **argv)
 		.pppd_log = NULL,
 		.pppd_plugin = NULL,
 		.pppd_ipparam = NULL,
+		.pppd_call = NULL,
 		.ca_file = NULL,
 		.user_cert = NULL,
 		.user_key = NULL,
@@ -180,7 +188,7 @@ int main(int argc, char **argv)
 		{"set-routes",	    required_argument, 0, 0},
 		{"no-routes",       no_argument, &cfg.set_routes, 0},
 		{"half-internet-routes", required_argument, 0, 0},
-		{"set-dns",	    required_argument, 0, 0},
+		{"set-dns",         required_argument, 0, 0},
 		{"no-dns",          no_argument, &cfg.set_dns, 0},
 		{"pppd-no-peerdns", no_argument, &cfg.pppd_use_peerdns, 0},
 		{"use-syslog",      no_argument, &cfg.use_syslog, 1},
@@ -195,6 +203,7 @@ int main(int argc, char **argv)
 		{"pppd-plugin",     required_argument, 0, 0},
 		{"pppd-ipparam",    required_argument, 0, 0},
 		{"pppd-ifname",     required_argument, 0, 0},
+		{"pppd-call",       required_argument, 0, 0},
 		{"plugin",          required_argument, 0, 0}, // deprecated
 		{0, 0, 0, 0}
 	};
@@ -243,6 +252,11 @@ int main(int argc, char **argv)
 				cfg.pppd_ipparam = strdup(optarg);
 				break;
 			}
+			if (strcmp(long_options[option_index].name,
+			           "pppd-call") == 0) {
+				cfg.pppd_call = strdup(optarg);
+				break;
+			}
 			// --plugin is deprecated, --pppd-plugin should be used
 			if (cfg.pppd_plugin == NULL &&
 			    strcmp(long_options[option_index].name,
@@ -274,8 +288,7 @@ int main(int argc, char **argv)
 			if (strcmp(long_options[option_index].name,
 			           "trusted-cert") == 0) {
 				if (add_trusted_cert(&cfg, optarg))
-					log_warn("Could not add certificate "
-					         "digest to whitelist.\n");
+					log_warn("Could not add certificate digest to whitelist.\n");
 				break;
 			}
 			if (strcmp(long_options[option_index].name,
@@ -298,8 +311,8 @@ int main(int argc, char **argv)
 			           "half-internet-routes") == 0) {
 				int half_internet_routes = strtob(optarg);
 				if (half_internet_routes < 0) {
-					log_warn("Bad half-internet-routes option: "
-					         "\"%s\"\n", optarg);
+					log_warn("Bad half-internet-routes option: \"%s\"\n",
+					         optarg);
 					break;
 				}
 				cfg.half_internet_routes = half_internet_routes;
@@ -309,8 +322,8 @@ int main(int argc, char **argv)
 			           "persistent") == 0) {
 				long int persistent = strtol(optarg, NULL, 0);
 				if ((persistent < 0) || (persistent >= UINT_MAX)) {
-					log_warn("Bad persistent option: "
-					         "\"%s\"\n", optarg);
+					log_warn("Bad persistent option: \"%s\"\n",
+					         optarg);
 					break;
 				}
 				cfg.persistent = persistent;
@@ -320,8 +333,7 @@ int main(int argc, char **argv)
 			           "set-dns") == 0) {
 				int set_dns = strtob(optarg);
 				if (set_dns < 0) {
-					log_warn("Bad set-dns option: \"%s\"\n",
-					         optarg);
+					log_warn("Bad set-dns option: \"%s\"\n", optarg);
 					break;
 				}
 				cfg.set_dns = set_dns;
@@ -329,7 +341,7 @@ int main(int argc, char **argv)
 			}
 			goto user_error;
 		case 'h':
-			printf("%s%s%s", usage, help_options, help_config);
+			printf("%s%s%s%s", usage, summary, help_options, help_config);
 			ret = EXIT_SUCCESS;
 			goto exit;
 		case 'v':
@@ -360,9 +372,7 @@ int main(int argc, char **argv)
 	set_syslog(cfg.use_syslog);
 
 	if (password != NULL)
-		log_warn("You should not pass the password on the command "
-		         "line. Type it interactively or use a config file "
-		         "instead.\n");
+		log_warn("You should not pass the password on the command line. Type it interactively or use a config file instead.\n");
 
 	// Load config file
 	if (config_file[0] != '\0') {
@@ -437,8 +447,7 @@ int main(int argc, char **argv)
 		log_debug("One-time password = \"%s\"\n", cfg.otp);
 
 	if (geteuid() != 0)
-		log_warn("This process was not spawned with root "
-		         "privileges, this will probably not work.\n");
+		log_warn("This process was not spawned with root privileges, this will probably not work.\n");
 
 	do {
 		if (run_tunnel(&cfg) != 0)
